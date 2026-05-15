@@ -148,4 +148,4 @@
                                    vec)]
             (when (seq monthly-files)
               (concat-videos! monthly-files concat-path yearly-out
-                              (str "yearly " name " " prev-year))))))))))
+                              (str "yearly " name " " prev-year)))))))))
