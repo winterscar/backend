@@ -36,7 +36,7 @@
  :biff.system-properties/user.timezone                 "UTC"
  :biff.system-properties/clojure.tools.logging.factory "clojure.tools.logging.impl/slf4j-factory"
 
- :biff.tasks/server                 #biff/env DOMAIN
+ :biff.tasks/server                 #or [#biff/env "DEPLOY_HOST" #biff/env DOMAIN]
  :biff.tasks/main-ns                pasquet.backend
  :biff.tasks/on-soft-deploy         "\"(pasquet.backend/on-save @pasquet.backend/system)\""
  :biff.tasks/generate-assets-fn     pasquet.backend/generate-assets!

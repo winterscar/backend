@@ -2,6 +2,20 @@
 
 let
   cfg = config.services.pasquet-backend;
+
+  trench = pkgs.stdenv.mkDerivation rec {
+    pname = "trenchman";
+    version = "0.4.0";
+    src = pkgs.fetchurl {
+      url = "https://github.com/athos/trenchman/releases/download/v${version}/trenchman_${version}_linux_amd64.tar.gz";
+      sha256 = "sha256-A9zjw2r7zcF0AyxBLHCfu3sFi7/CwSSvf08QPrhCZDI=";
+    };
+    sourceRoot = ".";
+    installPhase = ''
+      mkdir -p $out/bin
+      cp trench $out/bin/
+    '';
+  };
 in
 {
   options.services.pasquet-backend = {
@@ -39,30 +53,8 @@ in
       rlwrap
       rsync
       git
+      trench
     ];
-
-    # Trenchman for soft-deploy (nREPL eval over CLI)
-    # If not packaged in nixpkgs, we fetch the binary
-    systemd.services.pasquet-backend-trench-install = {
-      description = "Install trenchman binary";
-      wantedBy = [ "multi-user.target" ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-      path = with pkgs; [ curl gnutar gzip ];
-      script = let
-        version = "0.4.0";
-        arch = if pkgs.stdenv.hostPlatform.isAarch64 then "arm64" else "amd64";
-        file = "trenchman_${version}_linux_${arch}.tar.gz";
-      in ''
-        if [ ! -f /usr/local/bin/trench ]; then
-          mkdir -p /usr/local/bin
-          curl -sSLf "https://github.com/athos/trenchman/releases/download/v${version}/${file}" \
-            | tar zxvfC - /usr/local/bin trench
-        fi
-      '';
-    };
 
     # The app user - Biff tasks SSH in as app@server
     users.users.app = {
@@ -114,12 +106,14 @@ EOF
       startLimitIntervalSec = 500;
       startLimitBurst = 5;
 
+      path = with pkgs; [ clojure jdk21 git rlwrap bash ];
+
       serviceConfig = {
         User = "app";
         Restart = "on-failure";
         RestartSec = "5s";
         WorkingDirectory = "/home/app";
-        ExecStart = "${pkgs.bash}/bin/bash -c 'mkdir -p target/resources; ${pkgs.clojure}/bin/clj -M:prod'";
+        ExecStart = "${pkgs.bash}/bin/bash -c 'mkdir -p target/resources; clj -M:prod'";
       };
 
       environment = {
