@@ -1,5 +1,11 @@
 (ns pasquet.backend.timelapse
-  (:require [clojure.string :as str]))
+  (:require [clj-http.client :as http]
+            [clojure.java.io :as io]
+            [clojure.java.shell :as shell]
+            [clojure.string :as str]
+            [clojure.tools.logging :as log])
+  (:import [java.time LocalDate ZoneId]
+           [java.time.format DateTimeFormatter]))
 
 (defn parse-cameras [cameras-str]
   (when cameras-str
@@ -38,3 +44,108 @@
    "-i" concat-file
    "-c" "copy" "-movflags" "+faststart"
    "-y" output-path])
+
+(defn fetch-snapshot! [host api-key camera-id]
+  (:body (http/get (str host "/proxy/protect/api/cameras/" camera-id "/snapshot")
+                   {:headers {"x-api-key" api-key}
+                    :as :byte-array
+                    :insecure? true})))
+
+(defn capture-frames! [{:keys [unifi/host unifi/api-key unifi/cameras
+                                timelapse/frames-path]}]
+  (let [cameras (parse-cameras cameras)
+        today (str (LocalDate/now (ZoneId/of "UTC")))
+        timestamp (System/currentTimeMillis)]
+    (doseq [{:keys [name id]} cameras]
+      (try
+        (let [path (frame-path frames-path name today timestamp)]
+          (io/make-parents path)
+          (let [bytes (fetch-snapshot! host api-key id)]
+            (with-open [out (io/output-stream (io/file path))]
+              (.write out ^bytes bytes)))
+          (log/info "Captured frame for" name "at" path))
+        (catch Exception e
+          (log/warn "Failed to capture frame for" name ":" (.getMessage e)))))))
+
+(defn- delete-dir! [dir]
+  (doseq [f (reverse (file-seq (io/file dir)))]
+    (.delete f)))
+
+(defn compile-daily! [{:keys [timelapse/fps timelapse/frames-path timelapse/videos-path
+                               unifi/cameras]}]
+  (let [cameras (parse-cameras cameras)
+        yesterday (str (.minusDays (LocalDate/now (ZoneId/of "UTC")) 1))]
+    (doseq [{:keys [name]} cameras]
+      (let [fdir (frame-dir frames-path name yesterday)
+            output (daily-video-path videos-path name yesterday)]
+        (when (.isDirectory (io/file fdir))
+          (try
+            (io/make-parents output)
+            (let [result (apply shell/sh (ffmpeg-daily-cmd fps fdir output))]
+              (if (zero? (:exit result))
+                (do
+                  (log/info "Compiled daily video for" name yesterday)
+                  (delete-dir! fdir))
+                (log/error "ffmpeg daily failed for" name yesterday (:err result))))
+            (catch Exception e
+              (log/error "Daily compilation failed for" name yesterday (.getMessage e)))))))))
+
+(defn- write-concat-file! [concat-path video-files]
+  (io/make-parents concat-path)
+  (spit concat-path
+        (str/join "\n" (map #(str "file '" (.getAbsolutePath %) "'") video-files))))
+
+(defn- concat-videos! [video-files concat-path output-path label]
+  (try
+    (io/make-parents output-path)
+    (write-concat-file! concat-path video-files)
+    (let [result (apply shell/sh (ffmpeg-concat-cmd concat-path output-path))]
+      (io/delete-file concat-path true)
+      (if (zero? (:exit result))
+        (do
+          (log/info "Compiled" label "video:" output-path)
+          (doseq [f video-files]
+            (io/delete-file f true))
+          true)
+        (do
+          (log/error "ffmpeg concat failed for" label (:err result))
+          false)))
+    (catch Exception e
+      (io/delete-file concat-path true)
+      (log/error label "compilation failed:" (.getMessage e))
+      false)))
+
+(defn compile-rollup! [{:keys [timelapse/videos-path unifi/cameras]}]
+  (let [cameras (parse-cameras cameras)
+        today (LocalDate/now (ZoneId/of "UTC"))]
+    ;; Monthly rollup on 1st of month
+    (when (= 1 (.getDayOfMonth today))
+      (let [prev-month (.minusMonths today 1)
+            year-month (.format prev-month (DateTimeFormatter/ofPattern "yyyy-MM"))]
+        (doseq [{:keys [name]} cameras]
+          (let [daily-dir (io/file videos-path "daily" name)
+                monthly-out (monthly-video-path videos-path name year-month)
+                concat-path (str videos-path "/monthly/" name "/concat-" year-month ".txt")
+                daily-files (->> (.listFiles daily-dir)
+                                 (filter #(str/starts-with? (.getName %) year-month))
+                                 (filter #(str/ends-with? (.getName %) ".mp4"))
+                                 (sort-by #(.getName %))
+                                 vec)]
+            (when (seq daily-files)
+              (concat-videos! daily-files concat-path monthly-out
+                              (str "monthly " name " " year-month)))))))
+    ;; Yearly rollup on Jan 1st
+    (when (and (= 1 (.getMonthValue today)) (= 1 (.getDayOfMonth today)))
+      (let [prev-year (str (.getYear (.minusYears today 1)))]
+        (doseq [{:keys [name]} cameras]
+          (let [monthly-dir (io/file videos-path "monthly" name)
+                yearly-out (yearly-video-path videos-path name prev-year)
+                concat-path (str videos-path "/yearly/" name "/concat-" prev-year ".txt")
+                monthly-files (->> (.listFiles monthly-dir)
+                                   (filter #(str/starts-with? (.getName %) prev-year))
+                                   (filter #(str/ends-with? (.getName %) ".mp4"))
+                                   (sort-by #(.getName %))
+                                   vec)]
+            (when (seq monthly-files)
+              (concat-videos! monthly-files concat-path yearly-out
+                              (str "yearly " name " " prev-year))))))))))
