@@ -8,7 +8,7 @@ let
     version = "0.4.0";
     src = pkgs.fetchurl {
       url = "https://github.com/athos/trenchman/releases/download/v${version}/trenchman_${version}_linux_amd64.tar.gz";
-      sha256 = "sha256-A9zjw2r7zcF0AyxBLHCfu3sFi7/CwSSvf08QPrhCZDI=";
+      sha256 = "sha256-YYdDt8yrQRrm6FJJaRk1yNyadfIoLVj0M6OrMgD3/rA=";
     };
     sourceRoot = ".";
     installPhase = ''
