@@ -119,6 +119,8 @@ EOF
       environment = {
         BIFF_PROFILE = "prod";
         JAVA_HOME = "${pkgs.jdk21}";
+        # Prefer IPv4 — many home networks lack IPv6 routing
+        JAVA_TOOL_OPTIONS = "-Djava.net.preferIPv4Stack=true";
       };
     };
   };
