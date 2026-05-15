@@ -49,8 +49,8 @@
    "-y" output-path])
 
 (defn fetch-snapshot! [host api-key camera-id]
-  (:body (http/get (str host "/proxy/protect/api/cameras/" camera-id "/snapshot")
-                   {:headers {"x-api-key" api-key}
+  (:body (http/get (str host "/proxy/protect/integration/v1/cameras/" camera-id "/snapshot")
+                   {:headers {"X-API-Key" api-key}
                     :as :byte-array
                     :insecure? true})))
 
