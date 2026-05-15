@@ -1,9 +1,11 @@
 (ns pasquet.backend.timelapse
-  (:require [clj-http.client :as http]
+  (:require [chime.core :as chime]
+            [clj-http.client :as http]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
-            [clojure.tools.logging :as log])
+            [clojure.tools.logging :as log]
+            [com.biffweb :as biff])
   (:import [java.time LocalDate ZoneId]
            [java.time.format DateTimeFormatter]))
 
@@ -149,3 +151,35 @@
             (when (seq monthly-files)
               (concat-videos! monthly-files concat-path yearly-out
                               (str "yearly " name " " prev-year)))))))))
+
+(defn- every-n-seconds [n]
+  (iterate #(biff/add-seconds % n) (java.util.Date.)))
+
+(defn- daily-at-midnight []
+  (let [tomorrow-midnight (-> (LocalDate/now (ZoneId/of "UTC"))
+                              (.plusDays 1)
+                              (.atStartOfDay (ZoneId/of "UTC"))
+                              .toInstant
+                              java.util.Date/from)]
+    (iterate #(biff/add-seconds % 86400) tomorrow-midnight)))
+
+(defn use-timelapse [{:keys [timelapse/fps timelapse/day-duration
+                              unifi/cameras] :as ctx}]
+  (if (and fps day-duration cameras)
+    (let [interval (capture-interval-seconds fps day-duration)
+          _ (log/info "Starting timelapse: capture every" interval "seconds for"
+                      (count (parse-cameras cameras)) "cameras")
+          capture-sched (chime/chime-at
+                          (every-n-seconds interval)
+                          (fn [_] (capture-frames! ctx)))
+          daily-sched (chime/chime-at
+                        (daily-at-midnight)
+                        (fn [_]
+                          (compile-daily! ctx)
+                          (compile-rollup! ctx)))]
+      (update ctx :biff/stop conj
+              #(.close capture-sched)
+              #(.close daily-sched)))
+    (do
+      (log/warn "Timelapse not configured (missing fps, day-duration, or cameras). Skipping.")
+      ctx)))

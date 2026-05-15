@@ -7,6 +7,7 @@
             [pasquet.backend.ui :as ui]
             [pasquet.backend.worker :as worker]
             [pasquet.backend.schema :as schema]
+            [pasquet.backend.timelapse :as timelapse]
             [clojure.test :as test]
             [clojure.tools.logging :as log]
             [clojure.tools.namespace.repl :as tn-repl]
@@ -68,6 +69,7 @@
    biff/use-htmx-refresh
    biff/use-jetty
    biff/use-chime
+   timelapse/use-timelapse
    biff/use-beholder])
 
 (defn start []
