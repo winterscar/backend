@@ -25,3 +25,16 @@
 
 (defn yearly-video-path [videos-path camera-name year]
   (str videos-path "/yearly/" camera-name "/" year ".mp4"))
+
+(defn ffmpeg-daily-cmd [fps frame-dir output-path]
+  ["ffmpeg" "-framerate" (str fps)
+   "-pattern_type" "glob" "-i" (str frame-dir "/*.jpg")
+   "-c:v" "libx264" "-preset" "slow" "-crf" "28"
+   "-pix_fmt" "yuv420p" "-movflags" "+faststart"
+   "-y" output-path])
+
+(defn ffmpeg-concat-cmd [concat-file output-path]
+  ["ffmpeg" "-f" "concat" "-safe" "0"
+   "-i" concat-file
+   "-c" "copy" "-movflags" "+faststart"
+   "-y" output-path])

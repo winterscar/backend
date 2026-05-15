@@ -37,3 +37,18 @@
     (testing "yearly-video-path"
       (is (= "/tmp/videos/yearly/front/2026.mp4"
              (tl/yearly-video-path videos "front" "2026"))))))
+
+(deftest ffmpeg-daily-cmd-test
+  (is (= ["ffmpeg" "-framerate" "30"
+           "-pattern_type" "glob" "-i" "/tmp/frames/cam/2026-05-15/*.jpg"
+           "-c:v" "libx264" "-preset" "slow" "-crf" "28"
+           "-pix_fmt" "yuv420p" "-movflags" "+faststart"
+           "-y" "/tmp/videos/daily/cam/2026-05-15.mp4"]
+         (tl/ffmpeg-daily-cmd 30 "/tmp/frames/cam/2026-05-15" "/tmp/videos/daily/cam/2026-05-15.mp4"))))
+
+(deftest ffmpeg-concat-cmd-test
+  (is (= ["ffmpeg" "-f" "concat" "-safe" "0"
+           "-i" "/tmp/concat.txt"
+           "-c" "copy" "-movflags" "+faststart"
+           "-y" "/tmp/output.mp4"]
+         (tl/ffmpeg-concat-cmd "/tmp/concat.txt" "/tmp/output.mp4"))))
