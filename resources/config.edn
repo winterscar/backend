@@ -47,4 +47,12 @@
  :biff.tasks/watch-dirs             ["src" "dev" "resources" "test"]
  :biff.tasks/tailwind-version       "v3.4.17"
  :biff.tasks/git-deploy-cmd ["git" "push" "prod" "master"]
+
+ :unifi/host              #biff/env UNIFI_PROTECT_HOST
+ :unifi/api-key           #biff/secret UNIFI_PROTECT_API_KEY
+ :unifi/cameras           #biff/env UNIFI_PROTECT_CAMERAS
+ :timelapse/day-duration  #long #or [#biff/env "TIMELAPSE_DAY_DURATION" 30]
+ :timelapse/fps           #long #or [#biff/env "TIMELAPSE_FPS" 30]
+ :timelapse/frames-path   #biff/env TIMELAPSE_FRAMES_PATH
+ :timelapse/videos-path   #biff/env TIMELAPSE_VIDEOS_PATH
  }
