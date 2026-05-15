@@ -3,6 +3,7 @@
             [clj-http.client :as http]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
+            [clojure.set :as set]
             [clojure.string :as str]
             [clojure.tools.logging :as log]
             [com.biffweb :as biff])
@@ -117,40 +118,77 @@
       (log/error label "compilation failed:" (.getMessage e))
       false)))
 
+(defn- find-uncompiled-months
+  "Returns year-month strings (e.g. \"2026-05\") for which daily videos exist but no monthly video does."
+  [videos-path camera-name]
+  (let [daily-dir (io/file videos-path "daily" camera-name)
+        monthly-dir (io/file videos-path "monthly" camera-name)]
+    (when (and daily-dir (.isDirectory daily-dir))
+      (let [daily-months (->> (.listFiles daily-dir)
+                              (filter #(str/ends-with? (.getName %) ".mp4"))
+                              (map #(subs (.getName %) 0 7))
+                              set)
+            existing-months (->> (when (.isDirectory monthly-dir)
+                                  (.listFiles monthly-dir))
+                                (filter some?)
+                                (filter #(str/ends-with? (.getName %) ".mp4"))
+                                (map #(subs (.getName %) 0 7))
+                                set)
+            today-month (.format (LocalDate/now (ZoneId/of "UTC"))
+                                 (DateTimeFormatter/ofPattern "yyyy-MM"))]
+        ;; Don't compile the current month (still accumulating)
+        (sort (disj (set/difference daily-months existing-months) today-month))))))
+
+(defn- find-uncompiled-years
+  "Returns year strings (e.g. \"2026\") for which monthly videos exist but no yearly video does."
+  [videos-path camera-name]
+  (let [monthly-dir (io/file videos-path "monthly" camera-name)
+        yearly-dir (io/file videos-path "yearly" camera-name)]
+    (when (and monthly-dir (.isDirectory monthly-dir))
+      (let [monthly-years (->> (.listFiles monthly-dir)
+                               (filter #(str/ends-with? (.getName %) ".mp4"))
+                               (map #(subs (.getName %) 0 4))
+                               set)
+            existing-years (->> (when (.isDirectory yearly-dir)
+                                  (.listFiles yearly-dir))
+                                (filter some?)
+                                (filter #(str/ends-with? (.getName %) ".mp4"))
+                                (map #(subs (.getName %) 0 4))
+                                set)
+            current-year (str (.getYear (LocalDate/now (ZoneId/of "UTC"))))]
+        ;; Don't compile the current year (still accumulating)
+        (sort (disj (set/difference monthly-years existing-years) current-year))))))
+
 (defn compile-rollup! [{:keys [timelapse/videos-path unifi/cameras]}]
-  (let [cameras (parse-cameras cameras)
-        today (LocalDate/now (ZoneId/of "UTC"))]
-    ;; Monthly rollup on 1st of month
-    (when (= 1 (.getDayOfMonth today))
-      (let [prev-month (.minusMonths today 1)
-            year-month (.format prev-month (DateTimeFormatter/ofPattern "yyyy-MM"))]
-        (doseq [{:keys [name]} cameras]
-          (let [daily-dir (io/file videos-path "daily" name)
-                monthly-out (monthly-video-path videos-path name year-month)
-                concat-path (str videos-path "/monthly/" name "/concat-" year-month ".txt")
-                daily-files (->> (.listFiles daily-dir)
-                                 (filter #(str/starts-with? (.getName %) year-month))
+  (let [cameras (parse-cameras cameras)]
+    ;; Monthly rollups — find all months with daily videos but no monthly video yet
+    (doseq [{:keys [name]} cameras]
+      (doseq [year-month (find-uncompiled-months videos-path name)]
+        (let [daily-dir (io/file videos-path "daily" name)
+              monthly-out (monthly-video-path videos-path name year-month)
+              concat-path (str videos-path "/monthly/" name "/concat-" year-month ".txt")
+              daily-files (->> (.listFiles daily-dir)
+                               (filter #(str/starts-with? (.getName %) year-month))
+                               (filter #(str/ends-with? (.getName %) ".mp4"))
+                               (sort-by #(.getName %))
+                               vec)]
+          (when (seq daily-files)
+            (concat-videos! daily-files concat-path monthly-out
+                            (str "monthly " name " " year-month))))))
+    ;; Yearly rollups — find all years with monthly videos but no yearly video yet
+    (doseq [{:keys [name]} cameras]
+      (doseq [year (find-uncompiled-years videos-path name)]
+        (let [monthly-dir (io/file videos-path "monthly" name)
+              yearly-out (yearly-video-path videos-path name year)
+              concat-path (str videos-path "/yearly/" name "/concat-" year ".txt")
+              monthly-files (->> (.listFiles monthly-dir)
+                                 (filter #(str/starts-with? (.getName %) year))
                                  (filter #(str/ends-with? (.getName %) ".mp4"))
                                  (sort-by #(.getName %))
                                  vec)]
-            (when (seq daily-files)
-              (concat-videos! daily-files concat-path monthly-out
-                              (str "monthly " name " " year-month)))))))
-    ;; Yearly rollup on Jan 1st
-    (when (and (= 1 (.getMonthValue today)) (= 1 (.getDayOfMonth today)))
-      (let [prev-year (str (.getYear (.minusYears today 1)))]
-        (doseq [{:keys [name]} cameras]
-          (let [monthly-dir (io/file videos-path "monthly" name)
-                yearly-out (yearly-video-path videos-path name prev-year)
-                concat-path (str videos-path "/yearly/" name "/concat-" prev-year ".txt")
-                monthly-files (->> (.listFiles monthly-dir)
-                                   (filter #(str/starts-with? (.getName %) prev-year))
-                                   (filter #(str/ends-with? (.getName %) ".mp4"))
-                                   (sort-by #(.getName %))
-                                   vec)]
-            (when (seq monthly-files)
-              (concat-videos! monthly-files concat-path yearly-out
-                              (str "yearly " name " " prev-year)))))))))
+          (when (seq monthly-files)
+            (concat-videos! monthly-files concat-path yearly-out
+                            (str "yearly " name " " year))))))))
 
 (defn- every-n-seconds [n]
   (iterate #(biff/add-seconds % n) (java.util.Date.)))

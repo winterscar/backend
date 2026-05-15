@@ -106,7 +106,7 @@ EOF
       startLimitIntervalSec = 500;
       startLimitBurst = 5;
 
-      path = with pkgs; [ clojure jdk21 git rlwrap bash ];
+      path = with pkgs; [ clojure jdk21 git rlwrap bash ffmpeg ];
 
       serviceConfig = {
         User = "app";
