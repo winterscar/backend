@@ -205,16 +205,22 @@
                               unifi/cameras] :as ctx}]
   (if (and fps day-duration cameras)
     (let [interval (capture-interval-seconds fps day-duration)
+          midnight-times (daily-at-midnight)
           _ (log/info "Starting timelapse: capture every" interval "seconds for"
-                      (count (parse-cameras cameras)) "cameras")
+                      (count (parse-cameras cameras)) "cameras,"
+                      "next daily compile at" (str (first midnight-times)))
           capture-sched (chime/chime-at
                           (every-n-seconds interval)
                           (fn [_] (capture-frames! ctx)))
           daily-sched (chime/chime-at
-                        (daily-at-midnight)
-                        (fn [_]
+                        midnight-times
+                        (fn [time]
+                          (log/info "Daily task fired at" (str time))
                           (compile-daily! ctx)
-                          (compile-rollup! ctx)))]
+                          (compile-rollup! ctx))
+                        {:error-handler (fn [e]
+                                          (log/error e "Daily task error")
+                                          true)})]
       (update ctx :biff/stop conj
               #(.close capture-sched)
               #(.close daily-sched)))
