@@ -48,11 +48,15 @@
    "-c" "copy" "-movflags" "+faststart"
    "-y" output-path])
 
-(defn fetch-snapshot! [host api-key camera-id]
-  (:body (http/get (str host "/proxy/protect/integration/v1/cameras/" camera-id "/snapshot")
-                   {:headers {"X-API-Key" api-key}
-                    :as :byte-array
-                    :insecure? true})))
+(defn fetch-snapshot!
+  ([host api-key camera-id]
+   (fetch-snapshot! host api-key camera-id nil))
+  ([host api-key camera-id ts]
+   (:body (http/get (str host "/proxy/protect/integration/v1/cameras/" camera-id "/snapshot"
+                         (when ts (str "?ts=" ts)))
+                    {:headers {"X-API-Key" api-key}
+                     :as :byte-array
+                     :insecure? true}))))
 
 (defn capture-frames! [{:keys [unifi/host unifi/api-key unifi/cameras
                                 timelapse/frames-path]}]
@@ -189,6 +193,67 @@
           (when (seq monthly-files)
             (concat-videos! monthly-files concat-path yearly-out
                             (str "yearly " name " " year))))))))
+
+(defn backfill-day!
+  "Fetch historical snapshots for a single camera/date, then compile.
+   date-str is e.g. \"2026-05-10\". Runs synchronously."
+  [{:keys [unifi/host unifi/api-key timelapse/fps timelapse/day-duration
+           timelapse/frames-path timelapse/videos-path] :as ctx}
+   camera-name camera-id date-str]
+  (let [date (LocalDate/parse date-str)
+        start-ms (.toEpochMilli (.toInstant (.atStartOfDay date (ZoneId/of "UTC"))))
+        interval-ms (* 1000 (capture-interval-seconds fps day-duration))
+        end-ms (+ start-ms (* 86400 1000))
+        timestamps (take-while #(< % end-ms) (iterate #(+ % interval-ms) start-ms))
+        fdir (frame-dir frames-path camera-name date-str)
+        output (daily-video-path videos-path camera-name date-str)]
+    (if (.exists (io/file output))
+      (log/info "Skipping" camera-name date-str "- video already exists")
+      (do
+    (log/info "Backfilling" camera-name date-str "-" (count timestamps) "frames")
+    (doseq [ts timestamps]
+      (try
+        (let [path (frame-path frames-path camera-name date-str ts)]
+          (when-not (.exists (io/file path))
+            (io/make-parents path)
+            (let [bytes (fetch-snapshot! host api-key camera-id ts)]
+              (with-open [out (io/output-stream (io/file path))]
+                (.write out ^bytes bytes)))))
+        (catch Exception e
+          (log/warn "Failed frame" camera-name date-str ts ":" (.getMessage e)))))
+    (log/info "Frames done for" camera-name date-str "- compiling")
+    (when (.isDirectory (io/file fdir))
+      (try
+        (io/make-parents output)
+        (let [result (apply shell/sh (ffmpeg-daily-cmd fps fdir output))]
+          (if (zero? (:exit result))
+            (do (log/info "Compiled" camera-name date-str)
+                (delete-dir! fdir))
+            (log/error "ffmpeg failed for" camera-name date-str (:err result))))
+        (catch Exception e
+          (log/error "Compile failed for" camera-name date-str (.getMessage e)))))))))
+
+(defn backfill!
+  "Backfill historical timelapses. Fetches frames from Protect API for past days
+   and compiles them. Cameras run in parallel. Each camera processes days sequentially
+   (fetching next day's frames while previous day compiles).
+   days-back: how many days to go back (default 14)"
+  [{:keys [unifi/cameras] :as ctx} & {:keys [days-back camera-filter]
+                                       :or {days-back 14}}]
+  (let [cameras (cond->> (parse-cameras cameras)
+                  camera-filter (filter #(= (:name %) camera-filter)))
+        today (LocalDate/now (ZoneId/of "UTC"))
+        dates (mapv str (for [d (range days-back 0 -1)]
+                          (.minusDays today d)))]
+    (log/info "Backfill starting:" (count cameras) "cameras," (count dates) "days")
+    (let [futures (doall
+                    (for [{:keys [name id]} cameras]
+                      (future
+                        (doseq [date-str dates]
+                          (backfill-day! ctx name id date-str))
+                        (log/info "Backfill complete for" name))))]
+      (doseq [f futures] @f)
+      (log/info "Backfill complete"))))
 
 (defn- every-n-seconds [n]
   (iterate #(biff/add-seconds % n) (java.util.Date.)))
