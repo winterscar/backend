@@ -218,9 +218,11 @@
             (io/make-parents path)
             (let [bytes (fetch-snapshot! host api-key camera-id ts)]
               (with-open [out (io/output-stream (io/file path))]
-                (.write out ^bytes bytes)))))
+                (.write out ^bytes bytes)))
+            (Thread/sleep 200)))
         (catch Exception e
-          (log/warn "Failed frame" camera-name date-str ts ":" (.getMessage e)))))
+          (log/warn "Failed frame" camera-name date-str ts ":" (.getMessage e))
+          (Thread/sleep 2000))))
     (log/info "Frames done for" camera-name date-str "- compiling")
     (when (.isDirectory (io/file fdir))
       (try
@@ -246,12 +248,16 @@
         dates (mapv str (for [d (range days-back 0 -1)]
                           (.minusDays today d)))]
     (log/info "Backfill starting:" (count cameras) "cameras," (count dates) "days")
-    (let [futures (doall
+    (let [sem (java.util.concurrent.Semaphore. 2)
+          futures (doall
                     (for [{:keys [name id]} cameras]
                       (future
-                        (doseq [date-str dates]
-                          (backfill-day! ctx name id date-str))
-                        (log/info "Backfill complete for" name))))]
+                        (.acquire sem)
+                        (try
+                          (doseq [date-str dates]
+                            (backfill-day! ctx name id date-str))
+                          (log/info "Backfill complete for" name)
+                          (finally (.release sem))))))]
       (doseq [f futures] @f)
       (log/info "Backfill complete"))))
 
