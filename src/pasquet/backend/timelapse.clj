@@ -75,9 +75,10 @@
     (.delete f)))
 
 (defn compile-daily! [{:keys [timelapse/fps timelapse/frames-path timelapse/videos-path
-                               unifi/cameras]}]
+                               unifi/cameras timelapse/compile-date]}]
   (let [cameras (parse-cameras cameras)
-        yesterday (str (.minusDays (LocalDate/now (ZoneId/of "UTC")) 1))]
+        yesterday (str (or compile-date
+                           (.minusDays (LocalDate/now (ZoneId/of "UTC")) 1)))]
     (doseq [{:keys [name]} cameras]
       (let [fdir (frame-dir frames-path name yesterday)
             output (daily-video-path videos-path name yesterday)]
@@ -219,8 +220,13 @@
                         midnight-times
                         (fn [time]
                           (log/info "Daily task fired at" (str time))
-                          (compile-daily! ctx)
-                          (compile-rollup! ctx))
+                          (let [compile-date (.minusDays
+                                              (LocalDate/ofInstant
+                                                (.toInstant time)
+                                                (ZoneId/of "UTC"))
+                                              1)]
+                            (compile-daily! (assoc ctx :timelapse/compile-date compile-date))
+                            (compile-rollup! ctx)))
                         {:error-handler (fn [e]
                                           (log/error e "Daily task error")
                                           true)})]
