@@ -211,7 +211,10 @@
                       "next daily compile at" (str (first midnight-times)))
           capture-sched (chime/chime-at
                           (every-n-seconds interval)
-                          (fn [_] (capture-frames! ctx)))
+                          (fn [_] (capture-frames! ctx))
+                          {:error-handler (fn [e]
+                                           (log/error e "Capture task error")
+                                           true)})
           daily-sched (chime/chime-at
                         midnight-times
                         (fn [time]
