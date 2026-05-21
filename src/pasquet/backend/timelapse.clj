@@ -220,10 +220,11 @@
                         midnight-times
                         (fn [time]
                           (log/info "Daily task fired at" (str time))
-                          (let [compile-date (.minusDays
-                                              (LocalDate/ofInstant
-                                                (.toInstant time)
-                                                (ZoneId/of "UTC"))
+                          (let [instant (if (instance? java.time.Instant time)
+                                         time
+                                         (.toInstant time))
+                                compile-date (.minusDays
+                                              (LocalDate/ofInstant instant (ZoneId/of "UTC"))
                                               1)]
                             (compile-daily! (assoc ctx :timelapse/compile-date compile-date))
                             (compile-rollup! ctx)))
