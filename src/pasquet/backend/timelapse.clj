@@ -194,22 +194,32 @@
 (defn- every-n-seconds [n]
   (iterate #(biff/add-seconds % n) (java.util.Date.)))
 
-(defn- daily-at-midnight []
-  (let [tomorrow-midnight (-> (LocalDate/now (ZoneId/of "UTC"))
-                              (.plusDays 1)
-                              (.atStartOfDay (ZoneId/of "UTC"))
-                              .toInstant
-                              java.util.Date/from)]
-    (iterate #(biff/add-seconds % 86400) tomorrow-midnight)))
+(defn- daily-at-1am []
+  (let [now (LocalDate/now (ZoneId/of "UTC"))
+        next-1am (-> now
+                     (.plusDays 1)
+                     (.atTime 1 0)
+                     (.atZone (ZoneId/of "UTC"))
+                     .toInstant
+                     java.util.Date/from)
+        ;; If it's before 1am UTC today, use today's 1am instead
+        next-1am (if (< (.getHour (java.time.ZonedDateTime/now (ZoneId/of "UTC"))) 1)
+                   (-> now
+                       (.atTime 1 0)
+                       (.atZone (ZoneId/of "UTC"))
+                       .toInstant
+                       java.util.Date/from)
+                   next-1am)]
+    (iterate #(biff/add-seconds % 86400) next-1am)))
 
 (defn use-timelapse [{:keys [timelapse/fps timelapse/day-duration
                               unifi/cameras] :as ctx}]
   (if (and fps day-duration cameras)
     (let [interval (capture-interval-seconds fps day-duration)
-          midnight-times (daily-at-midnight)
+          daily-times (daily-at-1am)
           _ (log/info "Starting timelapse: capture every" interval "seconds for"
                       (count (parse-cameras cameras)) "cameras,"
-                      "next daily compile at" (str (first midnight-times)))
+                      "next daily compile at" (str (first daily-times)))
           capture-sched (chime/chime-at
                           (every-n-seconds interval)
                           (fn [_] (capture-frames! ctx))
@@ -217,16 +227,11 @@
                                            (log/error e "Capture task error")
                                            true)})
           daily-sched (chime/chime-at
-                        midnight-times
+                        daily-times
                         (fn [time]
                           (log/info "Daily task fired at" (str time))
-                          (let [instant (if (instance? java.time.Instant time)
-                                         time
-                                         (.toInstant time))
-                                compile-date (.minusDays
-                                              (LocalDate/ofInstant instant (ZoneId/of "UTC"))
-                                              1)]
-                            (compile-daily! (assoc ctx :timelapse/compile-date compile-date))
+                          (let [yesterday (.minusDays (LocalDate/now (ZoneId/of "UTC")) 1)]
+                            (compile-daily! (assoc ctx :timelapse/compile-date yesterday))
                             (compile-rollup! ctx)))
                         {:error-handler (fn [e]
                                           (log/error e "Daily task error")
